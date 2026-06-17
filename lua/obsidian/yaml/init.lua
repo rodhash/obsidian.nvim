@@ -32,6 +32,39 @@ local should_quote = function(s)
   end
 end
 
+-- Render a scalar value as a flow-style YAML token
+---@param v any
+---@return string
+local flow_scalar = function(v)
+  if type(v) == "string" then
+    if should_quote(v) then
+      local escaped = string.gsub(v, '"', '\\"')
+      return [["]] .. escaped .. [["]]
+    end
+    return v
+  end
+  return tostring(v)
+end
+
+-- Check if a table is a non-empty array of only strings/numbers/booleans
+---@param x table
+---@return boolean
+local is_flat_scalar_array = function(x)
+  if not util.tbl_is_array(x) then
+    return false
+  end
+  if vim.tbl_isempty(x) then
+    return false
+  end
+  for _, v in ipairs(x) do
+    local t = type(v)
+    if t ~= "string" and t ~= "number" and t ~= "boolean" then
+      return false
+    end
+  end
+  return true
+end
+
 ---@return string[]
 local dumps
 dumps = function(x, indent, order)
@@ -58,11 +91,18 @@ dumps = function(x, indent, order)
     local out = {}
 
     if util.tbl_is_array(x) then
+      if is_flat_scalar_array(x) then
+        local items = {}
+        for _, v in ipairs(x) do
+          table.insert(items, flow_scalar(v))
+        end
+        table.insert(out, indent_str .. "[" .. table.concat(items, ", ") .. "]")
+        return out
+      end
+
       for _, v in ipairs(x) do
         local item_lines = dumps(v, indent + 2)
-        -- Detect the indent string by 2 for canonical YAML lists.
-        local indent_str_to_use = string.rep(" ", math.max(indent - 2, 0))
-        table.insert(out, indent_str_to_use .. "- " .. util.lstrip_whitespace(item_lines[1]))
+        table.insert(out, indent_str .. "- " .. util.lstrip_whitespace(item_lines[1]))
         for i = 2, #item_lines do
           table.insert(out, item_lines[i])
         end
@@ -80,6 +120,12 @@ dumps = function(x, indent, order)
           table.insert(out, indent_str .. tostring(k) .. ": " .. dumps(v, 0)[1])
         elseif type(v) == "table" and vim.tbl_isempty(v) then
           table.insert(out, indent_str .. tostring(k) .. ": []")
+        elseif type(v) == "table" and is_flat_scalar_array(v) then
+          local items = {}
+          for _, item in ipairs(v) do
+            table.insert(items, flow_scalar(item))
+          end
+          table.insert(out, indent_str .. tostring(k) .. ": [" .. table.concat(items, ", ") .. "]")
         else
           local item_lines = dumps(v, indent + 2)
           table.insert(out, indent_str .. tostring(k) .. ":")
